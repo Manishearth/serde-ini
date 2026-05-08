@@ -80,3 +80,12 @@ fn smoke_en() {
 
     assert_eq!(model, serde_ini::from_read::<_, TestModel>(&data[..]).unwrap());
 }
+
+#[test]
+fn smoke_to_string() {
+    let model = expected();
+
+    let data = serde_ini::to_string(&model).unwrap();
+
+    assert_eq!(model, serde_ini::from_str::<TestModel>(&data).unwrap());
+}

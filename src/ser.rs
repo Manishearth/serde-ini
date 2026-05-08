@@ -47,6 +47,12 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<fmt::Error> for Error {
+    fn from(_: fmt::Error) -> Self {
+        Error::Custom("formatting error".to_string())
+    }
+}
+
 impl From<UnsupportedType> for Error {
     fn from(t: UnsupportedType) -> Self {
         Error::UnsupportedType(t)
@@ -106,7 +112,7 @@ pub struct MapSerializer<'a, W: 'a> {
     allow_values: bool,
 }
 
-impl<'a, 'k, W: Write> ValueSerializer<'a, 'k, W> {
+impl<'a, 'k, W: fmt::Write> ValueSerializer<'a, 'k, W> {
     fn serialize_string(&mut self, s: String) -> Result<()> {
         if !self.top_level || *self.allow_values {
             self.writer.write(&Item::Value {
@@ -125,7 +131,7 @@ impl<'a, 'k, W: Write> ValueSerializer<'a, 'k, W> {
     }
 }
 
-impl<'a, 'k, W: Write + 'a> ser::Serializer for ValueSerializer<'a, 'k, W> {
+impl<'a, 'k, W: fmt::Write + 'a> ser::Serializer for ValueSerializer<'a, 'k, W> {
     type Ok = ();
     type Error = Error;
 
@@ -390,7 +396,7 @@ impl<'a> ser::Serializer for &'a mut KeySerializer {
     }
 }
 
-impl<'a, W: Write> ser::Serializer for &'a mut Serializer<W> {
+impl<'a, W: fmt::Write> ser::Serializer for &'a mut Serializer<W> {
     type Ok = ();
     type Error = Error;
 
@@ -520,7 +526,7 @@ impl<'a, W: Write> ser::Serializer for &'a mut Serializer<W> {
     }
 }
 
-impl<'a, W: Write> ser::SerializeMap for MapSerializer<'a, W> {
+impl<'a, W: fmt::Write> ser::SerializeMap for MapSerializer<'a, W> {
     type Ok = ();
     type Error = Error;
 
@@ -548,7 +554,7 @@ impl<'a, W: Write> ser::SerializeMap for MapSerializer<'a, W> {
     }
 }
 
-impl<'a, W: Write> ser::SerializeStruct for MapSerializer<'a, W> {
+impl<'a, W: fmt::Write> ser::SerializeStruct for MapSerializer<'a, W> {
     type Ok = ();
     type Error = Error;
 
@@ -566,20 +572,46 @@ impl<'a, W: Write> ser::SerializeStruct for MapSerializer<'a, W> {
     }
 }
 
-pub fn to_writer<W: Write, T: Serialize + ?Sized>(writer: W, value: &T) -> Result<()> {
-    let mut ser = Serializer::new(Writer::new(writer, Default::default()));
+/// This code was initially using io::Write
+/// but has since been switched to fmt::Write
+///
+/// This allows the public API to still use io::Error.
+struct IoWriteWrapper<W> {
+    inner: W,
+    error: Option<io::Error>,
+}
 
-    value.serialize(&mut ser)
+impl<W: Write> fmt::Write for IoWriteWrapper<W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        match self.inner.write_all(s.as_bytes()) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                self.error = Some(e);
+                Err(fmt::Error)
+            }
+        }
+    }
+}
+
+pub fn to_writer<W: Write, T: Serialize + ?Sized>(writer: W, value: &T) -> Result<()> {
+    let mut wrapper = IoWriteWrapper { inner: writer, error: None };
+    {
+        let mut ser = Serializer::new(Writer::new(&mut wrapper, Default::default()));
+        value.serialize(&mut ser)?;
+    }
+    if let Some(e) = wrapper.error {
+        return Err(e.into());
+    }
+    Ok(())
 }
 
 pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>> {
-    let mut writer = Vec::with_capacity(128);
-    to_writer(&mut writer, value).map(|_| writer)
+    to_string(value).map(String::into_bytes)
 }
 
 pub fn to_string<T: Serialize + ?Sized>(value: &T) -> Result<String> {
-    let vec = to_vec(value)?;
-
-    // does not emit invalid utf8
-    Ok(unsafe { String::from_utf8_unchecked(vec) })
+    let mut s = String::with_capacity(128);
+    let mut ser = Serializer::new(Writer::new(&mut s, Default::default()));
+    value.serialize(&mut ser)?;
+    Ok(s)
 }

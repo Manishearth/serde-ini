@@ -1,5 +1,5 @@
 use parse::Item;
-use std::io::{self, Write};
+
 use std::fmt;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -42,8 +42,8 @@ impl<W> Writer<W> {
     }
 }
 
-impl<W: Write> Writer<W> {
-    pub fn write(&mut self, item: &Item) -> io::Result<()> {
+impl<W: fmt::Write> Writer<W> {
+    pub fn write(&mut self, item: &Item) -> fmt::Result {
         match *item {
             Item::Section { ref name } => write!(&mut self.write, "[{}]{}", name, self.line_ending),
             Item::Value { ref key, ref value } => write!(&mut self.write, "{}={}{}", key, value, self.line_ending),
